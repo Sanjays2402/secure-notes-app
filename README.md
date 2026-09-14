@@ -6,44 +6,11 @@ Static single-page frontend on S3 (optionally behind CloudFront + Origin Access 
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    U[User browser] -->|HTTPS| CF{S3 website\nor CloudFront + OAC}
-    CF -->|GET /notes/{id}\nPOST /notes| API[HTTP API]
-    API -->|POST /notes| FN1[Create Lambda]
-    API -->|GET /notes/{id}| FN2[Get Lambda]
-    FN1 -->|GenerateDataKey| KMS[(KMS customer key)]
-    FN2 -->|Decrypt| KMS
-    FN1 -->|PutItem ciphertext| DDB[(DynamoDB\nnoteId PK)]
-    FN2 -->|GetItem| DDB
-    FN1 -.->|logs: noteId only| CW[CloudWatch Logs]
-    FN2 -.->|logs: noteId only| CW
-```
+![Architecture](docs/architecture.svg)
 
 ## Data flow (envelope encryption)
 
-```mermaid
-sequenceDiagram
-    participant App as Browser
-    participant C as Create Lambda
-    participant K as AWS KMS
-    participant D as DynamoDB
-    participant G as Get Lambda
-
-    App->>C: POST /notes {title, body}
-    C->>K: GenerateDataKey (AES-256)
-    K-->>C: plaintext key + encrypted key
-    Note over C: Fernet(JSON{title,body}, key) → ciphertext<br/>drop plaintext key
-    C->>D: PutItem {noteId, ciphertext, encryptedDataKey, keyArn, createdAt}
-    C-->>App: 201 {noteId}
-
-    App->>G: GET /notes/{id}
-    G->>D: GetItem(noteId)
-    D-->>G: ciphertext + encryptedDataKey
-    G->>K: Decrypt(encryptedDataKey)
-    K-->>G: plaintext data key
-    G-->>App: 200 {title, body, createdAt}
-```
+![Envelope encryption flow](docs/encryption-flow.svg)
 
 ### Why envelope encryption?
 

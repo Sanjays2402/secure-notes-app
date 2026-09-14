@@ -1,0 +1,11 @@
+flowchart LR
+    U[User browser] -->|HTTPS| CF{S3 website\nor CloudFront + OAC}
+    CF -->|"GET /notes/{id}\nPOST /notes"| API[HTTP API]
+    API -->|POST /notes| FN1[Create Lambda]
+    API -->|"GET /notes/{id}"| FN2[Get Lambda]
+    FN1 -->|GenerateDataKey| KMS[(KMS customer key)]
+    FN2 -->|Decrypt| KMS
+    FN1 -->|PutItem ciphertext| DDB[(DynamoDB\nnoteId PK)]
+    FN2 -->|GetItem| DDB
+    FN1 -.->|logs: noteId only| CW[CloudWatch Logs]
+    FN2 -.->|logs: noteId only| CW
