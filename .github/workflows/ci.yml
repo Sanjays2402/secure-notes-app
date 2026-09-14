@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # cryptography (Lambda dep) + boto3/botocore (mocked in tests) + pytest + pyyaml
+      - run: pip install -r src/requirements.txt boto3 pytest pyyaml
+      - run: python -m pytest tests/ -q
+
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install aws-sam-cli
+      # --lint runs cfn-lint locally: no AWS credentials needed.
+      - run: sam validate --lint
+        env:
+          SAM_CLI_TELEMETRY: "0"

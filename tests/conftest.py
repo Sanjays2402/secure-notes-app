@@ -31,12 +31,18 @@ class FakeKMS:
 
     PREFIX = b"vault-enc:"
 
+    def __init__(self):
+        self.decrypt_calls = 0
+        self.generate_calls = 0
+
     def generate_data_key(self, KeyId, KeySpec):  # noqa: N803 (boto3 naming)
         assert KeySpec == "AES_256"
+        self.generate_calls += 1
         key = os.urandom(32)
         return {"Plaintext": key, "CiphertextBlob": self.PREFIX + key, "KeyId": KeyId}
 
     def decrypt(self, CiphertextBlob):  # noqa: N803
+        self.decrypt_calls += 1
         if not CiphertextBlob.startswith(self.PREFIX):
             raise ClientError(
                 {"Error": {"Code": "InvalidCiphertextException",
@@ -64,6 +70,22 @@ class FakeTable:
     def get_item(self, Key):  # noqa: N803
         item = self.items.get(Key["noteId"])
         return {"Item": item} if item else {}
+
+    def scan(self, Limit=None, ExclusiveStartKey=None):  # noqa: N803
+        # Deterministic order for tests: sorted by noteId.
+        keys = sorted(self.items)
+        start = 0
+        if ExclusiveStartKey:
+            after = ExclusiveStartKey["noteId"]
+            start = keys.index(after) + 1 if after in keys else 0
+        page_keys = keys[start:(start + Limit) if Limit else None]
+        resp = {
+            "Items": [self.items[k] for k in page_keys],
+            "Count": len(page_keys),
+        }
+        if start + len(page_keys) < len(keys):
+            resp["LastEvaluatedKey"] = {"noteId": page_keys[-1]}
+        return resp
 
 
 class FakeDynamoDB:
@@ -96,6 +118,8 @@ boto3.resource = _fake_resource
 def reset_fakes():
     """Clear stored items between tests (keys are unique per test anyway)."""
     _FAKE_DDB.tables.clear()
+    _FAKE_KMS.decrypt_calls = 0
+    _FAKE_KMS.generate_calls = 0
 
 
 def fake_kms():

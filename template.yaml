@@ -57,12 +57,20 @@ Resources:
             Resource: '*'
           # The two Lambda execution roles may ONLY mint and unwrap data keys.
           # No Encrypt/Decrypt of arbitrary payloads, no key administration.
+          #
+          # NOTE: role ARNs are constructed with !Sub from the explicit
+          # RoleName values below instead of !GetAtt. A !GetAtt here would
+          # create a Key -> Role dependency edge while the roles' policies
+          # already depend on the key (Role -> Key) — a circular dependency
+          # that fails `sam validate --lint` AND the real CloudFormation
+          # deploy. The constructed ARNs are identical because RoleName is
+          # set explicitly; keep them in sync if a RoleName ever changes.
           - Sid: AllowLambdaEnvelopeOperations
             Effect: Allow
             Principal:
               AWS:
-                - !GetAtt CreateNoteRole.Arn
-                - !GetAtt GetNoteRole.Arn
+                - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-create-note-${StageName}'
+                - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-get-note-${StageName}'
             Action:
               - kms:GenerateDataKey # create: mint a fresh 256-bit data key per note
               - kms:Decrypt         # read:  unwrap the stored encrypted data key
@@ -136,6 +144,33 @@ Resources:
                   - dynamodb:DescribeTable
                 Resource: !GetAtt NotesTable.Arn
 
+  # List role: deliberately the weakest of the three. It can Scan the table
+  # for metadata but has NO KMS permissions — even a fully compromised list
+  # Lambda cannot mint or unwrap data keys, so note contents stay sealed.
+  ListNotesRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-list-notes-${StageName}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: TableScan
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:DescribeTable
+                Resource: !GetAtt NotesTable.Arn
+
   # -------------------------------------------------------------------------
   # DynamoDB — stores ciphertext + encrypted data keys, NEVER plaintext notes
   # -------------------------------------------------------------------------
@@ -150,12 +185,22 @@ Resources:
       KeySchema:
         - AttributeName: noteId
           KeyType: HASH
+      # DynamoDB TTL: items carrying a numeric `expiresAt` (epoch seconds)
+      # are deleted automatically once that time passes. Notes created
+      # without an expiry simply have no `expiresAt` attribute and live on.
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
       # Item shape:
       #   noteId            S  (partition key, uuid4 hex)
       #   ciphertext        S  (base64 Fernet token of {"title":..,"body":..})
       #   encryptedDataKey  S  (base64 blob from KMS; only KMS can unwrap it)
       #   kmsKeyId          S  (key ARN the data key was minted from)
       #   createdAt         S  (ISO-8601, metadata only)
+      #   tags              SS (optional, PLAINTEXT by design — server-side
+      #                        search filters on tags without decrypting)
+      #   expiresAt         N  (optional, epoch seconds; DynamoDB TTL attr)
+      #   ciphertextBytes   N  (metadata only, for debugging)
       #   schemaVersion     N  (=1, forward-compat for future formats)
 
   # -------------------------------------------------------------------------
@@ -225,6 +270,33 @@ Resources:
           Properties:
             ApiId: !Ref NotesApi
             Path: /notes/{id}
+            Method: GET
+
+  # List endpoint: returns note METADATA only (noteId, tags, timestamps).
+  # Titles/bodies stay inside the encrypted payload; this function never
+  # calls KMS and its role has no KMS grants.
+  ListNotesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-list-notes-${StageName}'
+      Runtime: python3.12
+      Handler: list_notes/app.lambda_handler
+      CodeUri: src/
+      Role: !GetAtt ListNotesRole.Arn
+      Timeout: 10
+      MemorySize: 256
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          NOTES_TABLE_NAME: !Ref NotesTable
+          LOG_LEVEL: INFO
+      Events:
+        ListNotes:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref NotesApi
+            Path: /notes
             Method: GET
 
   # -------------------------------------------------------------------------

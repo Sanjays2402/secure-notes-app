@@ -1,6 +1,8 @@
 """GET /notes/{id} — fetch a note and decrypt it via KMS.
 
-Response (200): {"noteId": str, "title": str, "body": str, "createdAt": str}
+Response (200):
+    {"noteId": str, "title": str, "body": str, "createdAt": str,
+     "tags": [str], "expiresAt": str | null}
 Response (404): {"error": "not found"}
 
 The plaintext body is returned to the caller (that's the point of the app)
@@ -9,6 +11,7 @@ but is NEVER written to logs — only the noteId is logged.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import os
@@ -63,6 +66,7 @@ def lambda_handler(event: dict, context) -> dict:
         return _response(500, {"error": "could not decrypt note"})
 
     logger.info("note retrieved: id=%s", note_id)
+    expires = item.get("expiresAt")
     return _response(
         200,
         {
@@ -70,5 +74,11 @@ def lambda_handler(event: dict, context) -> dict:
             "title": payload.get("title", ""),
             "body": payload.get("body", ""),
             "createdAt": item.get("createdAt", ""),
+            # Plaintext metadata (tags were stored unencrypted by design).
+            "tags": sorted({str(t) for t in item.get("tags", set())}),
+            "expiresAt": (
+                dt.datetime.fromtimestamp(expires, dt.timezone.utc).isoformat()
+                if isinstance(expires, (int, float)) else None
+            ),
         },
     )

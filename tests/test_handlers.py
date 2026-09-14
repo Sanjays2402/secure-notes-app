@@ -157,3 +157,104 @@ def test_responses_carry_cors_headers():
     assert resp["headers"]["Access-Control-Allow-Origin"] == "*"
     resp = create_app.lambda_handler(_event({"title": "t", "body": "b"}), None)
     assert resp["headers"]["Access-Control-Allow-Origin"] == "*"
+
+
+# --- tags -----------------------------------------------------------------
+
+def test_create_with_tags_stored_normalized():
+    resp = create_app.lambda_handler(
+        _event({"title": "t", "body": "b",
+                "tags": ["Finance", " taxes ", "finance"]}), None)
+    assert resp["statusCode"] == 201
+    note_id = json.loads(resp["body"])["noteId"]
+    item = fake_table().items[note_id]
+    assert item["tags"] == {"finance", "taxes"}  # lowercased + deduped
+
+
+def test_create_without_tags_has_no_tags_attribute():
+    note_id = _create()
+    assert "tags" not in fake_table().items[note_id]
+
+
+@pytest.mark.parametrize("tags", [
+    "not-a-list",
+    [""] ,
+    ["   "],
+    [123],
+    ["ok"] * 11,
+    ["x" * 51],
+    ["bad!tag"],
+])
+def test_create_rejects_bad_tags(tags):
+    resp = create_app.lambda_handler(_event({"title": "t", "body": "b", "tags": tags}), None)
+    assert resp["statusCode"] == 400
+    assert "error" in json.loads(resp["body"])
+
+
+def test_tags_never_enter_encrypted_payload():
+    # Tags live in plaintext metadata; the encrypted payload must not contain them.
+    resp = create_app.lambda_handler(
+        _event({"title": "t", "body": "b", "tags": ["uniquetagxyz"]}), None)
+    note_id = json.loads(resp["body"])["noteId"]
+    item = fake_table().items[note_id]
+    assert "uniquetagxyz" not in item["ciphertext"]
+    assert item["tags"] == {"uniquetagxyz"}
+
+
+# --- expiry / TTL ----------------------------------------------------------
+
+def test_create_with_future_expiry_iso():
+    resp = create_app.lambda_handler(
+        _event({"title": "t", "body": "b", "expiresAt": "2030-01-01T00:00:00Z"}), None)
+    assert resp["statusCode"] == 201
+    item = fake_table().items[json.loads(resp["body"])["noteId"]]
+    assert isinstance(item["expiresAt"], int)
+    assert item["expiresAt"] > 1_700_000_000  # sane epoch, numeric for TTL
+
+
+def test_create_with_future_expiry_epoch():
+    future = 2_000_000_000
+    resp = create_app.lambda_handler(
+        _event({"title": "t", "body": "b", "expiresAt": future}), None)
+    assert resp["statusCode"] == 201
+    item = fake_table().items[json.loads(resp["body"])["noteId"]]
+    assert item["expiresAt"] == future
+
+
+@pytest.mark.parametrize("expires_at", [
+    "2001-01-01T00:00:00Z",   # past ISO
+    1_000_000_000,            # past epoch
+    "not-a-date",
+    True,
+    {"when": "soon"},
+])
+def test_create_rejects_bad_expiry(expires_at):
+    resp = create_app.lambda_handler(
+        _event({"title": "t", "body": "b", "expiresAt": expires_at}), None)
+    assert resp["statusCode"] == 400
+
+
+def test_create_without_expiry_has_no_ttl_attribute():
+    note_id = _create()
+    assert "expiresAt" not in fake_table().items[note_id]
+
+
+# --- get returns new metadata fields (additive) ----------------------------
+
+def test_get_returns_tags_and_expiry():
+    resp = create_app.lambda_handler(
+        _event({"title": "t", "body": SECRET, "tags": ["Work"],
+                "expiresAt": "2030-06-01T00:00:00Z"}), None)
+    note_id = json.loads(resp["body"])["noteId"]
+    resp = get_app.lambda_handler(_event(path_id=note_id), None)
+    data = json.loads(resp["body"])
+    assert data["tags"] == ["work"]
+    assert data["expiresAt"].startswith("2030-06-01")
+    assert data["body"] == SECRET
+
+
+def test_get_without_tags_or_expiry_returns_defaults():
+    note_id = _create()
+    data = json.loads(get_app.lambda_handler(_event(path_id=note_id), None)["body"])
+    assert data["tags"] == []
+    assert data["expiresAt"] is None

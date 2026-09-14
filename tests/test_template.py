@@ -139,3 +139,57 @@ def test_no_hardcoded_credentials_in_template():
     text = open(path).read().lower()
     for needle in ["akia", "aws_secret", "password", "BEGIN PRIVATE KEY"]:
         assert needle not in text, f"suspicious string in template: {needle}"
+
+
+# --- list endpoint / TTL ----------------------------------------------------
+
+def test_list_function_and_route_exist(resources):
+    assert "ListNotesFunction" in resources
+    props = resources["ListNotesFunction"]["Properties"]
+    assert props["Runtime"] == "python3.12"
+    assert props["Handler"] == "list_notes/app.lambda_handler"
+    events = [(e["Properties"]["Path"], e["Properties"]["Method"])
+              for e in props["Events"].values()]
+    assert ("/notes", "GET") in events
+
+
+def test_list_role_has_scan_only_no_kms(resources):
+    assert "ListNotesRole" in resources
+    acts = set()
+    for pol in resources["ListNotesRole"]["Properties"]["Policies"]:
+        for stmt in _statements(pol["PolicyDocument"]):
+            acts.update(_actions(stmt))
+    assert "dynamodb:Scan" in acts
+    assert not any(a.startswith("kms:") for a in acts), f"list role has KMS: {acts}"
+    assert not any(a in {"dynamodb:PutItem", "dynamodb:GetItem"} for a in acts)
+
+
+def test_table_has_ttl_on_expires_at(resources):
+    ttl = resources["NotesTable"]["Properties"]["TimeToLiveSpecification"]
+    assert ttl["AttributeName"] == "expiresAt"
+    assert ttl["Enabled"] is True
+
+
+def test_all_expected_routes_present(resources):
+    events = []
+    for fn in ["CreateNoteFunction", "GetNoteFunction", "ListNotesFunction"]:
+        for ev in resources[fn]["Properties"]["Events"].values():
+            events.append((ev["Properties"]["Path"], ev["Properties"]["Method"]))
+    assert ("/notes", "POST") in events
+    assert ("/notes", "GET") in events
+    assert ("/notes/{id}", "GET") in events
+
+
+def test_key_policy_avoids_role_getatt_cycle(resources):
+    # The key policy must not !GetAtt the Lambda roles (that edge + the
+    # roles' GetAtt on the key = circular dependency). Role ARNs are built
+    # with !Sub from the explicit RoleNames instead.
+    policy = resources["NotesKey"]["Properties"]["KeyPolicy"]
+    principals = []
+    for stmt in _statements(policy):
+        if stmt.get("Sid") == "AllowLambdaEnvelopeOperations":
+            p = stmt["Principal"]["AWS"]
+            principals.extend(p if isinstance(p, list) else [p])
+    assert len(principals) == 2
+    for arn in principals:
+        assert ":role/" in arn and "GetAtt" not in arn, arn

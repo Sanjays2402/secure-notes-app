@@ -41,6 +41,22 @@
         <span>Body</span>
         <textarea id="noteBody" rows="8" placeholder="Write the secret. It leaves your screen only as ciphertext."></textarea>
       </label>
+      <div class="field-row">
+        <label class="field">
+          <span>Tags <em>(optional, searchable)</em></span>
+          <input id="noteTags" type="text" placeholder="finance, taxes" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Expires</span>
+          <select id="noteExpiry">
+            <option value="">Never</option>
+            <option value="86400">In 1 day</option>
+            <option value="604800">In 7 days</option>
+            <option value="2592000">In 30 days</option>
+          </select>
+        </label>
+      </div>
+      <p class="micro-hint">Tags are stored unencrypted so notes can be found without decrypting — don't put secrets in them.</p>
       <div class="row">
         <span id="charCount" class="counter">0 / 100,000</span>
         <button id="sealBtn" class="btn-primary">Seal note</button>
@@ -66,6 +82,7 @@
           <span id="viewDate" class="date"></span>
         </div>
         <h3 id="viewTitle"></h3>
+        <div id="viewTags" class="chips small"></div>
         <p id="viewBody" class="note-body"></p>
       </article>
       <p id="openMsg" class="msg" role="status"></p>
@@ -75,6 +92,21 @@
         <ul id="recentList" class="recent-list"></ul>
         <p id="recentEmpty" class="empty">Nothing sealed yet. Your recent note IDs live only in this browser.</p>
       </div>
+    </section>
+
+    <section class="card browse" aria-label="Browse notes">
+      <div class="card-head">
+        <h2>Browse</h2>
+        <p class="hint">Search by tag — the API filters server-side and returns note metadata only. Titles and bodies stay encrypted until you open a note.</p>
+      </div>
+      <div class="browse-bar">
+        <input id="searchInput" type="text" placeholder="search tags… (e.g. fin)" autocomplete="off" />
+        <button id="refreshBtn" class="btn-ghost">Refresh</button>
+      </div>
+      <div id="tagChips" class="chips" role="group" aria-label="Filter by tag"></div>
+      <ul id="browseList" class="browse-list"></ul>
+      <p id="browseEmpty" class="empty">No notes yet — seal one above, or try a different search.</p>
+      <p id="browseMsg" class="msg" role="status"></p>
     </section>
   </main>
 

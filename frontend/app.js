@@ -13,6 +13,8 @@ const $ = (id) => document.getElementById(id);
 const els = {
   title: $("noteTitle"),
   body: $("noteBody"),
+  tags: $("noteTags"),
+  expiry: $("noteExpiry"),
   seal: $("sealBtn"),
   count: $("charCount"),
   composeMsg: $("composeMsg"),
@@ -24,9 +26,16 @@ const els = {
   viewDate: $("viewDate"),
   viewTitle: $("viewTitle"),
   viewBody: $("viewBody"),
+  viewTags: $("viewTags"),
   recent: $("recentList"),
   recentEmpty: $("recentEmpty"),
   keyStatus: $("keyStatus"),
+  search: $("searchInput"),
+  refresh: $("refreshBtn"),
+  chips: $("tagChips"),
+  browseList: $("browseList"),
+  browseEmpty: $("browseEmpty"),
+  browseMsg: $("browseMsg"),
 };
 
 function apiConfigured() {
@@ -71,18 +80,27 @@ els.seal.addEventListener("click", async () => {
     setMsg(els.composeMsg, `Body is over the ${MAX_BODY.toLocaleString()}-character limit.`, "error");
     return;
   }
+  const payload = { title, body };
+  const tags = els.tags.value.split(",").map((t) => t.trim()).filter(Boolean);
+  if (tags.length) payload.tags = tags;
+  if (els.expiry.value) {
+    payload.expiresAt = new Date(Date.now() + Number(els.expiry.value) * 1000).toISOString();
+  }
   els.seal.disabled = true;
   try {
     const { noteId } = await api("/notes", {
       method: "POST",
-      body: JSON.stringify({ title, body }),
+      body: JSON.stringify(payload),
     });
     rememberNote(noteId, title);
     setMsg(els.composeMsg, `Sealed. Note ID: ${noteId}`, "ok");
     els.title.value = "";
     els.body.value = "";
+    els.tags.value = "";
+    els.expiry.value = "";
     els.count.textContent = `0 / ${MAX_BODY.toLocaleString()}`;
     els.idInput.value = noteId;
+    loadBrowse(); // the new note shows up in the browse list
   } catch (err) {
     setMsg(els.composeMsg, err.message, "error");
   } finally {
@@ -107,6 +125,7 @@ async function openNote(noteId) {
     els.viewDate.textContent = note.createdAt ? new Date(note.createdAt).toLocaleString() : "";
     els.viewTitle.textContent = note.title;
     els.viewBody.textContent = note.body;
+    renderTagChips(els.viewTags, note.tags || [], null);
     els.view.classList.remove("hidden");
   } catch (err) {
     setMsg(els.openMsg, err.message, "error");
@@ -161,6 +180,87 @@ function renderRecent() {
 }
 
 renderRecent();
+
+/* ---------- browse: server-side tag search (metadata only) ---------- */
+
+let activeTag = null;
+let searchTimer = null;
+
+function renderTagChips(container, tags, onPick) {
+  container.innerHTML = "";
+  for (const tag of tags) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip" + (tag === activeTag ? " active" : "");
+    chip.textContent = tag;
+    if (onPick) {
+      chip.addEventListener("click", () => {
+        activeTag = activeTag === tag ? null : tag;
+        loadBrowse();
+      });
+    } else {
+      chip.disabled = true;
+    }
+    container.append(chip);
+  }
+}
+
+async function loadBrowse() {
+  setMsg(els.browseMsg, "", "");
+  els.browseList.innerHTML = "";
+  const params = new URLSearchParams({ limit: "50" });
+  const q = els.search.value.trim();
+  if (activeTag) params.set("tag", activeTag);
+  else if (q) params.set("q", q);
+  try {
+    const data = await api(`/notes?${params}`);
+    const notes = data.notes || [];
+    els.browseEmpty.style.display = notes.length ? "none" : "";
+    // Tag chips from the current result set.
+    const allTags = [...new Set(notes.flatMap((n) => n.tags || []))].sort();
+    renderTagChips(els.chips, allTags, true);
+    for (const n of notes) {
+      const li = document.createElement("li");
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "browse-row";
+      const meta = document.createElement("span");
+      meta.className = "browse-meta";
+      const idSpan = document.createElement("span");
+      idSpan.className = "mono";
+      idSpan.textContent = n.noteId.slice(0, 12) + "…";
+      const dateSpan = document.createElement("span");
+      dateSpan.className = "date";
+      dateSpan.textContent = n.createdAt ? new Date(n.createdAt).toLocaleDateString() : "";
+      meta.append(idSpan, dateSpan);
+      const tagWrap = document.createElement("span");
+      tagWrap.className = "chips small";
+      renderTagChips(tagWrap, n.tags || [], null);
+      const openSpan = document.createElement("span");
+      openSpan.className = "browse-open";
+      openSpan.textContent = "Decrypt →";
+      btn.append(meta, tagWrap, openSpan);
+      btn.addEventListener("click", () => {
+        els.idInput.value = n.noteId;
+        openNote(n.noteId);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      });
+      li.append(btn);
+      els.browseList.append(li);
+    }
+  } catch (err) {
+    setMsg(els.browseMsg, err.message, "error");
+  }
+}
+
+els.search.addEventListener("input", () => {
+  activeTag = null; // free-text search replaces the chip filter
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(loadBrowse, 350);
+});
+els.refresh.addEventListener("click", loadBrowse);
+
+if (apiConfigured()) loadBrowse();
 
 if (!apiConfigured()) {
   els.keyStatus.textContent = "API not configured — see app.js";
