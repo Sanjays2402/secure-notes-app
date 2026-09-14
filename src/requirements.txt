@@ -1,0 +1,3 @@
+# Bundled into each Lambda deployment package by `sam build`.
+# manylinux wheels exist for python3.12, so this deploys cleanly.
+cryptography>=44

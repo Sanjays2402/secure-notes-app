@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vault — Encrypted Notes</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+
+  <header class="masthead">
+    <div class="brand">
+      <svg class="lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+        <rect x="4.5" y="10" width="15" height="10" rx="2.5"/>
+        <path d="M8 10V7a4 4 0 0 1 8 0v3"/>
+        <circle cx="12" cy="15" r="1.4" fill="currentColor" stroke="none"/>
+      </svg>
+      <div>
+        <h1>Vault</h1>
+        <p class="tagline">Notes sealed with a key only you hold</p>
+      </div>
+    </div>
+    <div class="keyline">
+      <span class="dot"></span>
+      <span id="keyStatus">KMS envelope encryption</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="card composer" aria-label="Write a new note">
+      <div class="card-head">
+        <h2>New note</h2>
+        <p class="hint">Sealed client-side conceptually — encrypted in Lambda with a fresh KMS data key per note.</p>
+      </div>
+      <label class="field">
+        <span>Title</span>
+        <input id="noteTitle" type="text" maxlength="200" placeholder="e.g. Seed phrase backup plan" autocomplete="off" />
+      </label>
+      <label class="field">
+        <span>Body</span>
+        <textarea id="noteBody" rows="8" placeholder="Write the secret. It leaves your screen only as ciphertext."></textarea>
+      </label>
+      <div class="row">
+        <span id="charCount" class="counter">0 / 100,000</span>
+        <button id="sealBtn" class="btn-primary">Seal note</button>
+      </div>
+      <p id="composeMsg" class="msg" role="status"></p>
+    </section>
+
+    <section class="card opener" aria-label="Open a note">
+      <div class="card-head">
+        <h2>Open note</h2>
+        <p class="hint">Enter a note ID to fetch and decrypt it.</p>
+      </div>
+      <label class="field">
+        <span>Note ID</span>
+        <div class="id-row">
+          <input id="noteId" type="text" placeholder="paste a note id…" autocomplete="off" spellcheck="false" />
+          <button id="openBtn" class="btn-ghost">Decrypt</button>
+        </div>
+      </label>
+      <article id="noteView" class="note-view hidden" aria-live="polite">
+        <div class="note-meta">
+          <span id="viewId" class="mono"></span>
+          <span id="viewDate" class="date"></span>
+        </div>
+        <h3 id="viewTitle"></h3>
+        <p id="viewBody" class="note-body"></p>
+      </article>
+      <p id="openMsg" class="msg" role="status"></p>
+
+      <div class="recent">
+        <h3>Sealed on this device</h3>
+        <ul id="recentList" class="recent-list"></ul>
+        <p id="recentEmpty" class="empty">Nothing sealed yet. Your recent note IDs live only in this browser.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>Each note is encrypted with its own AES-256 data key, minted by AWS KMS. DynamoDB holds ciphertext only.</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

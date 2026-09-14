@@ -1,0 +1,285 @@
+/* Vault — a quiet, ink-and-brass dark aesthetic. No gradients, no templates. */
+
+:root {
+  --ink: #0b0d12;
+  --panel: #12151d;
+  --panel-2: #171b25;
+  --line: #262c3a;
+  --line-soft: #1d2230;
+  --text: #e9e4d8;
+  --muted: #8f96a6;
+  --faint: #5b6272;
+  --brass: #c9a35c;
+  --brass-dim: #8a6f3c;
+  --danger: #d97a7a;
+  --ok: #8fc7a1;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--text);
+  font-family: var(--sans);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* faint film grain for texture */
+.grain {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+}
+
+.masthead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2.2rem clamp(1.2rem, 5vw, 4rem) 1.4rem;
+  border-bottom: 1px solid var(--line-soft);
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.brand { display: flex; gap: 1rem; align-items: center; }
+
+.lock {
+  width: 42px;
+  height: 42px;
+  color: var(--brass);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px;
+  background: var(--panel);
+}
+
+.brand h1 {
+  font-family: var(--serif);
+  font-size: 1.9rem;
+  margin: 0;
+  letter-spacing: 0.04em;
+  font-weight: 500;
+}
+
+.tagline {
+  margin: 0.15rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  letter-spacing: 0.02em;
+}
+
+.keyline {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  padding: 0.45rem 0.9rem;
+  background: var(--panel);
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.4rem;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem clamp(1.2rem, 5vw, 4rem);
+}
+
+@media (max-width: 860px) {
+  .layout { grid-template-columns: 1fr; }
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line-soft);
+  border-radius: 16px;
+  padding: 1.6rem;
+}
+
+.card-head h2 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 1.35rem;
+  margin: 0 0 0.3rem;
+  letter-spacing: 0.02em;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin: 0 0 1.2rem;
+  line-height: 1.5;
+}
+
+.field { display: block; margin-bottom: 1.1rem; }
+
+.field > span {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--faint);
+  margin-bottom: 0.45rem;
+}
+
+input[type="text"], textarea {
+  width: 100%;
+  background: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 0.75rem 0.9rem;
+  font-size: 0.95rem;
+  font-family: var(--sans);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+textarea { resize: vertical; min-height: 160px; line-height: 1.6; }
+
+input:focus, textarea:focus { border-color: var(--brass-dim); }
+
+.id-row { display: flex; gap: 0.6rem; }
+.id-row input { font-family: var(--mono); font-size: 0.85rem; }
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.counter {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--faint);
+}
+
+.btn-primary, .btn-ghost {
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  border-radius: 10px;
+  padding: 0.7rem 1.4rem;
+  cursor: pointer;
+  transition: transform 0.08s ease, background 0.15s ease;
+}
+
+.btn-primary {
+  background: var(--brass);
+  color: #14100a;
+  border: none;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.btn-primary:hover { background: #d9b36e; }
+.btn-primary:active { transform: scale(0.98); }
+.btn-primary:disabled { opacity: 0.45; cursor: wait; }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--brass);
+  border: 1px solid var(--brass-dim);
+  white-space: nowrap;
+}
+.btn-ghost:hover { background: rgba(201, 163, 92, 0.1); }
+
+.msg { font-size: 0.85rem; min-height: 1.2em; margin: 0.9rem 0 0; }
+.msg.error { color: var(--danger); }
+.msg.ok { color: var(--ok); }
+
+.note-view {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--brass);
+  border-radius: 10px;
+  padding: 1.1rem 1.2rem;
+  margin-top: 1.1rem;
+  background: var(--panel-2);
+}
+.note-view.hidden { display: none; }
+
+.note-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.6rem;
+}
+.mono {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--faint);
+  word-break: break-all;
+}
+.date { font-size: 0.75rem; color: var(--faint); white-space: nowrap; }
+
+.note-view h3 {
+  font-family: var(--serif);
+  font-weight: 500;
+  margin: 0 0 0.6rem;
+  font-size: 1.15rem;
+}
+
+.note-body {
+  white-space: pre-wrap;
+  line-height: 1.65;
+  margin: 0;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.recent { margin-top: 1.6rem; border-top: 1px solid var(--line-soft); padding-top: 1.2rem; }
+.recent h3 {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--faint);
+  margin: 0 0 0.7rem;
+  font-weight: 600;
+}
+
+.recent-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }
+.recent-list li button {
+  width: 100%;
+  text-align: left;
+  background: var(--ink);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 0.55rem 0.8rem;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  font-size: 0.85rem;
+}
+.recent-list li button:hover { border-color: var(--brass-dim); }
+.recent-list .rid { font-family: var(--mono); font-size: 0.72rem; color: var(--faint); }
+
+.empty { color: var(--faint); font-size: 0.82rem; font-style: italic; }
+
+.foot {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 clamp(1.2rem, 5vw, 4rem) 2.5rem;
+  color: var(--faint);
+  font-size: 0.78rem;
+  line-height: 1.6;
+}

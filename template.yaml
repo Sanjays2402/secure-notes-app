@@ -1,0 +1,344 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  Secure Notes App — personal notes protected with per-note KMS envelope
+  encryption. Static frontend on S3 (optional CloudFront + OAC), HTTP API with
+  two Lambda functions, DynamoDB stores only ciphertext, customer-managed KMS
+  key with least-privilege access.
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+  ProjectName:
+    Type: String
+    Default: secure-notes
+    Description: Prefix used for resource names.
+  StageName:
+    Type: String
+    Default: prod
+    Description: Deployment stage label (used in resource names and tags).
+  EnableCloudFront:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: >-
+      Serve the static site through CloudFront (HTTPS, edge caching, Origin
+      Access Control) instead of the raw S3 website endpoint.
+
+Conditions:
+  UseCloudFront: !Equals [!Ref EnableCloudFront, 'true']
+  UsePublicSite: !Not [!Equals [!Ref EnableCloudFront, 'true']]
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+  # -------------------------------------------------------------------------
+  # KMS — customer-managed key, one data key per note (envelope encryption)
+  # -------------------------------------------------------------------------
+  NotesKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'Envelope-encryption key for ${ProjectName} (${StageName})'
+      Enabled: true
+      EnableKeyRotation: true # automatic annual rotation of backing key material
+      KeyUsage: ENCRYPT_DECRYPT
+      KeySpec: SYMMETRIC_DEFAULT
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          # Account root keeps administrative control (required by AWS).
+          - Sid: AllowRootAdministration
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          # The two Lambda execution roles may ONLY mint and unwrap data keys.
+          # No Encrypt/Decrypt of arbitrary payloads, no key administration.
+          - Sid: AllowLambdaEnvelopeOperations
+            Effect: Allow
+            Principal:
+              AWS:
+                - !GetAtt CreateNoteRole.Arn
+                - !GetAtt GetNoteRole.Arn
+            Action:
+              - kms:GenerateDataKey # create: mint a fresh 256-bit data key per note
+              - kms:Decrypt         # read:  unwrap the stored encrypted data key
+            Resource: '*'
+
+  # -------------------------------------------------------------------------
+  # IAM — two least-privilege roles, one per Lambda
+  # -------------------------------------------------------------------------
+  CreateNoteRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-create-note-${StageName}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # CloudWatch Logs only.
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: EnvelopeKeyUse
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kms:GenerateDataKey
+                Resource: !GetAtt NotesKey.Arn
+        - PolicyName: TableWrite
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:DescribeTable
+                Resource: !GetAtt NotesTable.Arn
+
+  GetNoteRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-get-note-${StageName}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: EnvelopeKeyUse
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                Resource: !GetAtt NotesKey.Arn
+        - PolicyName: TableRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:DescribeTable
+                Resource: !GetAtt NotesTable.Arn
+
+  # -------------------------------------------------------------------------
+  # DynamoDB — stores ciphertext + encrypted data keys, NEVER plaintext notes
+  # -------------------------------------------------------------------------
+  NotesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-notes-${StageName}'
+      BillingMode: PAY_PER_REQUEST # on-demand: $0 in the free tier at this scale
+      AttributeDefinitions:
+        - AttributeName: noteId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: noteId
+          KeyType: HASH
+      # Item shape:
+      #   noteId            S  (partition key, uuid4 hex)
+      #   ciphertext        S  (base64 Fernet token of {"title":..,"body":..})
+      #   encryptedDataKey  S  (base64 blob from KMS; only KMS can unwrap it)
+      #   kmsKeyId          S  (key ARN the data key was minted from)
+      #   createdAt         S  (ISO-8601, metadata only)
+      #   schemaVersion     N  (=1, forward-compat for future formats)
+
+  # -------------------------------------------------------------------------
+  # HTTP API + Lambdas
+  # -------------------------------------------------------------------------
+  NotesApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Name: !Sub '${ProjectName}-api-${StageName}'
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+      # NOTE: AllowOrigins '*' keeps the demo simple. For a real deployment,
+      # lock this to your site origin (CloudFront domain or S3 website URL).
+
+  CreateNoteFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-create-note-${StageName}'
+      Runtime: python3.12
+      Handler: create_note/app.lambda_handler
+      CodeUri: src/
+      Role: !GetAtt CreateNoteRole.Arn
+      Timeout: 10
+      MemorySize: 256
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          NOTES_TABLE_NAME: !Ref NotesTable
+          KMS_KEY_ID: !GetAtt NotesKey.Arn
+          LOG_LEVEL: INFO
+      Events:
+        PostNote:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref NotesApi
+            Path: /notes
+            Method: POST
+
+  GetNoteFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-get-note-${StageName}'
+      Runtime: python3.12
+      Handler: get_note/app.lambda_handler
+      CodeUri: src/
+      Role: !GetAtt GetNoteRole.Arn
+      Timeout: 10
+      MemorySize: 256
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          NOTES_TABLE_NAME: !Ref NotesTable
+          KMS_KEY_ID: !GetAtt NotesKey.Arn
+          LOG_LEVEL: INFO
+      Events:
+        GetNote:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref NotesApi
+            Path: /notes/{id}
+            Method: GET
+
+  # -------------------------------------------------------------------------
+  # Static site — S3 website hosting, optionally fronted by CloudFront + OAC
+  #
+  # TRADEOFF (why CloudFront is opt-in):
+  #   S3 website endpoint: simplest, ~$0, but HTTP only and no custom-domain
+  #     TLS without extra work. Fine for a portfolio demo.
+  #   CloudFront + Origin Access Control: HTTPS, edge caching, custom domain
+  #     via ACM, bucket stays fully private (no public bucket policy). Adds
+  #     a distribution (~$0 at this scale, free tier covers 1 TB/mo) and a
+  #     few minutes of deploy time. Recommended for anything real.
+  # -------------------------------------------------------------------------
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-site-${AWS::AccountId}-${StageName}'
+      # Only enable website hosting in public-site mode; with CloudFront the
+      # bucket is a private origin behind OAC.
+      WebsiteConfiguration: !If
+        - UsePublicSite
+        - IndexDocument: index.html
+          ErrorDocument: index.html
+        - !Ref 'AWS::NoValue'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: !If [UsePublicSite, false, true]
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: !If [UsePublicSite, false, true]
+
+  # Public read-only access for the S3 website endpoint (public-site mode).
+  WebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: UsePublicSite
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub '${WebsiteBucket.Arn}/*'
+
+  # CloudFront origin access control (CloudFront mode): bucket stays private.
+  SiteOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Condition: UseCloudFront
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${ProjectName}-oac-${StageName}'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  SiteDistribution:
+    Type: AWS::CloudFront::Distribution
+    Condition: UseCloudFront
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt WebsiteBucket.RegionalDomainName
+            OriginAccessControlId: !Ref SiteOriginAccessControl
+            S3OriginConfig: {}
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD]
+          ForwardedValues:
+            QueryString: false
+        PriceClass: PriceClass_100 # cheapest edge set; fine for a demo
+
+  # Allow only this distribution to read the bucket (CloudFront mode).
+  WebsiteBucketOacPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: UseCloudFront
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${WebsiteBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub >-
+                  arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${SiteDistribution}
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+  ApiEndpoint:
+    Description: Base URL of the notes HTTP API (paste into frontend/app.js)
+    Value: !Sub 'https://${NotesApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
+  NotesTableName:
+    Description: DynamoDB table holding encrypted notes
+    Value: !Ref NotesTable
+  KmsKeyArn:
+    Description: Customer-managed KMS key for envelope encryption
+    Value: !GetAtt NotesKey.Arn
+  WebsiteBucketName:
+    Description: S3 bucket for the static frontend
+    Value: !Ref WebsiteBucket
+  WebsiteURL:
+    Description: Public site URL (S3 website endpoint or CloudFront)
+    Value: !If
+      - UseCloudFront
+      - !Sub 'https://${SiteDistribution.DomainName}'
+      - !GetAtt WebsiteBucket.WebsiteURL

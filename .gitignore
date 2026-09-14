@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.aws-sam/
+node_modules/
+.DS_Store
