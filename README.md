@@ -125,13 +125,3 @@ tests/
 - S3 versioning for note history.
 - WAF on the HTTP API + tightened CORS origin (currently `*` for demo simplicity).
 
-## Portfolio deliverables checklist
-
-- [ ] Screenshot: CloudFront/S3 URL serving the site
-- [ ] Screenshot: API Gateway routes (`POST /notes`, `GET /notes/{id}`)
-- [ ] Screenshot: DynamoDB item showing ciphertext + `encryptedDataKey` (no plaintext)
-- [ ] Screenshot: create → get flow with CloudWatch logs (noteId only, no content)
-- [ ] Short demo GIF: seal a note → open it with its ID
-- [ ] GitHub repo with code + this README (architecture, encryption design, least-privilege policies, tests, costs)
-- [ ] LinkedIn post one-liner + repo link
-- [ ] Resume bullet: *"Built an envelope-encrypted notes app (KMS per-note data keys, Lambda, API Gateway, DynamoDB); zero plaintext at rest or in logs."*
