@@ -52,13 +52,14 @@ def _actions(stmt):
 
 def test_expected_resources_exist(resources):
     for name in ["NotesKey", "NotesTable", "NotesApi", "CreateNoteFunction",
-                 "GetNoteFunction", "CreateNoteRole", "GetNoteRole",
-                 "WebsiteBucket"]:
+                 "GetNoteFunction", "DeleteNoteFunction", "CreateNoteRole",
+                 "GetNoteRole", "DeleteNoteRole", "WebsiteBucket"]:
         assert name in resources, f"missing resource: {name}"
 
 
 def test_lambdas_are_python312(resources):
-    for fn in ["CreateNoteFunction", "GetNoteFunction"]:
+    for fn in ["CreateNoteFunction", "GetNoteFunction",
+               "DeleteNoteFunction", "ListNotesFunction"]:
         props = resources[fn]["Properties"]
         assert props["Runtime"] == "python3.12"
         assert props["CodeUri"] == "src/"
@@ -170,14 +171,49 @@ def test_table_has_ttl_on_expires_at(resources):
     assert ttl["Enabled"] is True
 
 
+def test_delete_function_and_route_exist(resources):
+    assert "DeleteNoteFunction" in resources
+    props = resources["DeleteNoteFunction"]["Properties"]
+    assert props["Runtime"] == "python3.12"
+    assert props["Handler"] == "delete_note/app.lambda_handler"
+    events = [(e["Properties"]["Path"], e["Properties"]["Method"])
+              for e in props["Events"].values()]
+    assert ("/notes/{id}", "DELETE") in events
+
+
+def test_delete_role_has_deleteitem_only_no_kms(resources):
+    # Deleting stored ciphertext needs no decryption, so the role must not
+    # have any KMS grants (unlike get, which unwraps the data key).
+    assert "DeleteNoteRole" in resources
+    acts = set()
+    for pol in resources["DeleteNoteRole"]["Properties"]["Policies"]:
+        for stmt in _statements(pol["PolicyDocument"]):
+            acts.update(_actions(stmt))
+    assert "dynamodb:DeleteItem" in acts
+    assert not any(a.startswith("kms:") for a in acts), f"delete role has KMS: {acts}"
+    assert not any(a in {"dynamodb:PutItem", "dynamodb:GetItem",
+                         "dynamodb:Scan"} for a in acts)
+
+
+def test_delete_role_has_no_wildcard_actions(resources):
+    for pol in resources["DeleteNoteRole"]["Properties"]["Policies"]:
+        for stmt in _statements(pol["PolicyDocument"]):
+            for act in _actions(stmt):
+                assert "*" not in act
+                svc, _, _ = act.partition(":")
+                assert svc == "dynamodb", f"delete role unexpected service {act}"
+
+
 def test_all_expected_routes_present(resources):
     events = []
-    for fn in ["CreateNoteFunction", "GetNoteFunction", "ListNotesFunction"]:
+    for fn in ["CreateNoteFunction", "GetNoteFunction", "ListNotesFunction",
+               "DeleteNoteFunction"]:
         for ev in resources[fn]["Properties"]["Events"].values():
             events.append((ev["Properties"]["Path"], ev["Properties"]["Method"]))
     assert ("/notes", "POST") in events
     assert ("/notes", "GET") in events
     assert ("/notes/{id}", "GET") in events
+    assert ("/notes/{id}", "DELETE") in events
 
 
 def test_key_policy_avoids_role_getatt_cycle(resources):

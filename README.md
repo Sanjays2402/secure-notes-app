@@ -2,9 +2,9 @@
 
 A personal notes app where **every note is encrypted with its own AES-256 data key**, minted by AWS KMS. DynamoDB stores ciphertext only — a database leak reveals nothing without KMS access.
 
-Static single-page frontend on S3 (optionally behind CloudFront + Origin Access Control) → HTTP API → three Python 3.12 Lambdas → DynamoDB, with a customer-managed KMS key and three least-privilege IAM roles.
+Static single-page frontend on S3 (optionally behind CloudFront + Origin Access Control) → HTTP API → four Python 3.12 Lambdas → DynamoDB, with a customer-managed KMS key and four least-privilege IAM roles.
 
-**Features:** per-note envelope encryption · optional **tags** (plaintext metadata for search) with server-side `?q=` / `?tag=` filtering · optional **per-note expiry** via DynamoDB TTL · **notes export** script · dark single-page frontend with search + tag chips.
+**Features:** per-note envelope encryption · optional **tags** (plaintext metadata for search) with server-side `?q=` / `?tag=` filtering · optional **per-note expiry** via DynamoDB TTL · **note deletion** via `DELETE /notes/{id}` (its role gets `dynamodb:DeleteItem` only — destroying ciphertext needs no decryption, so zero KMS permissions) · **notes export** script · dark single-page frontend with search + tag chips.
 
 ## Architecture
 
@@ -28,6 +28,7 @@ Static single-page frontend on S3 (optionally behind CloudFront + Origin Access 
 | Create Lambda role | `kms:GenerateDataKey` on the notes key; `dynamodb:PutItem` on the table | Decrypt anything, read the table, touch other keys |
 | Get Lambda role | `kms:Decrypt` on the notes key; `dynamodb:GetItem` on the table | Mint data keys, write to the table |
 | List Lambda role | `dynamodb:Scan` on the table — metadata only | Any KMS operation: cannot mint or unwrap data keys, so note contents stay sealed even if compromised |
+| Delete Lambda role | `dynamodb:DeleteItem` on the table | Any KMS operation: deleting stored ciphertext never requires decryption, so there is nothing to leak even under compromise |
 | KMS key policy | Mirrors the above (both key policy *and* identity policy must allow) | No `kms:*` for any Lambda role; root retains admin |
 | DynamoDB | Holds ciphertext + wrapped keys + metadata (tags are plaintext by design, for search) | Never sees plaintext titles/bodies |
 | DynamoDB TTL | Auto-deletes items whose numeric `expiresAt` has passed | — |
@@ -45,6 +46,7 @@ Static single-page frontend on S3 (optionally behind CloudFront + Origin Access 
 | `POST` | `/notes` | Create a note. Body: `{"title", "body", "tags"? , "expiresAt"?}` → `201 {"noteId"}`. `tags`: ≤10 labels (lowercased, deduped). `expiresAt`: ISO-8601 or epoch seconds, must be in the future → DynamoDB TTL auto-deletes the note. |
 | `GET` | `/notes` | List note **metadata** (never decrypts). Query: `?q=` substring over tags, `?tag=` exact tag, `?limit=` 1–100, `?nextToken=` pagination. → `{"notes": [{noteId, createdAt, tags, expiresAt, ciphertextBytes}], "count", "nextToken"}` |
 | `GET` | `/notes/{id}` | Fetch + decrypt one note → `{noteId, title, body, createdAt, tags, expiresAt}` |
+| `DELETE` | `/notes/{id}` | Delete a note → `204` (empty). `404` if the id does not exist — no silent success on a typo'd id. No KMS involved: the role only has `dynamodb:DeleteItem`. |
 
 Export all notes (decrypted via the API) to JSON:
 
@@ -89,10 +91,11 @@ At personal-note scale this sits comfortably in the AWS Free Tier: Lambda 1M req
 python3 -m pytest tests/ -q
 ```
 
-87 tests, all mocked (fake KMS + fake DynamoDB in `tests/conftest.py`) — no AWS credentials or network needed:
+98 tests, all mocked (fake KMS + fake DynamoDB in `tests/conftest.py`) — no AWS credentials or network needed:
 
 - `test_crypto.py` — encrypt/decrypt round-trips, per-note key uniqueness, tampered-ciphertext / wrong-key / forged-key failures, 100 KB body under DynamoDB limits.
 - `test_handlers.py` — create→get flow, validation (400/413), 404s, decryption-failure 500s, assertions that plaintext bodies never reach logs or storage; tag validation/normalization, expiry validation (ISO + epoch, future-only), tags/expiry round-trip through create→get.
+- `test_delete.py` — `DELETE /notes/{id}` semantics: 204 on delete, 404 on missing or double delete, 400 on missing id, deleted note vanishes from get + list, and proof the delete path never calls KMS.
 - `test_list.py` — list returns metadata only (no ciphertext, no titles/bodies), tag=`?tag=` exact and `?q=` substring filtering, combined filters, newest-first ordering, limit/nextToken pagination, bad-param 400s, and proof the list path never calls KMS.
 - `test_export.py` — export script pagination, per-note fetch, tag/q filter passthrough, error mapping, JSON output shape.
 - `test_template.py` — template parses; KMS key policy grants Lambdas only `GenerateDataKey`/`Decrypt`; no wildcard IAM actions; create role can't decrypt, get role can't mint, list role has Scan only and zero KMS; key policy avoids the role circular dependency (`!Sub` ARNs, not `!GetAtt`); TTL enabled on `expiresAt`; all three API routes present; no hardcoded credentials.
@@ -108,6 +111,7 @@ src/
   common/crypto.py       # envelope-encryption helpers (+ data-key caching note)
   create_note/app.py     # POST /notes (tags + optional TTL expiry)
   get_note/app.py        # GET /notes/{id}
+  delete_note/app.py     # DELETE /notes/{id} — no KMS needed (ciphertext destroy)
   list_notes/app.py      # GET /notes — metadata-only search, never decrypts (no KMS perms)
 scripts/
   export_notes.py        # export all notes (decrypted via API) to timestamped JSON
@@ -125,3 +129,13 @@ tests/
 - S3 versioning for note history.
 - WAF on the HTTP API + tightened CORS origin (currently `*` for demo simplicity).
 
+## Portfolio deliverables checklist
+
+- [ ] Screenshot: CloudFront/S3 URL serving the site
+- [ ] Screenshot: API Gateway routes (`POST /notes`, `GET /notes/{id}`)
+- [ ] Screenshot: DynamoDB item showing ciphertext + `encryptedDataKey` (no plaintext)
+- [ ] Screenshot: create → get flow with CloudWatch logs (noteId only, no content)
+- [ ] Short demo GIF: seal a note → open it with its ID
+- [ ] GitHub repo with code + this README (architecture, encryption design, least-privilege policies, tests, costs)
+- [ ] LinkedIn post one-liner + repo link
+- [ ] Resume bullet: *"Built an envelope-encrypted notes app (KMS per-note data keys, Lambda, API Gateway, DynamoDB); zero plaintext at rest or in logs."*

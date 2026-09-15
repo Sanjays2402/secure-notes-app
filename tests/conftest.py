@@ -71,8 +71,18 @@ class FakeTable:
         item = self.items.get(Key["noteId"])
         return {"Item": item} if item else {}
 
-    def scan(self, Limit=None, ExclusiveStartKey=None):  # noqa: N803
-        # Deterministic order for tests: sorted by noteId.
+    def delete_item(self, Key, ConditionExpression=None):  # noqa: N803
+        if (ConditionExpression == "attribute_exists(noteId)"
+                and Key["noteId"] not in self.items):
+            raise ClientError(
+                {"Error": {"Code": "ConditionalCheckFailedException",
+                           "Message": "not exists"}},
+                "DeleteItem",
+            )
+        self.items.pop(Key["noteId"], None)
+        return {}
+
+    def scan(self, Limit=None, ExclusiveStartKey=None):  # noqa: N803        # Deterministic order for tests: sorted by noteId.
         keys = sorted(self.items)
         start = 0
         if ExclusiveStartKey:
